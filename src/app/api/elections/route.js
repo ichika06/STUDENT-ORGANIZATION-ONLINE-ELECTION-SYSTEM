@@ -20,13 +20,30 @@ function mapElectionRow(row) {
 }
 
 export async function GET() {
-  const res = await pool.query(`
-    SELECT id, name, nomination_start_at, nomination_end_at, election_start_at, election_end_at, start_at, end_at
-    FROM elections
-    ORDER BY created_at DESC
-    LIMIT 1
-  `)
-  return NextResponse.json({ election: mapElectionRow(res.rows[0]) })
+  try {
+    const res = await pool.query(`
+      SELECT id, name, nomination_start_at, nomination_end_at, election_start_at, election_end_at, start_at, end_at
+      FROM elections
+      ORDER BY created_at DESC
+      LIMIT 1
+    `)
+    return NextResponse.json({ election: mapElectionRow(res.rows[0]) })
+  } catch (error) {
+    console.error('Error fetching election:', error.message)
+    if (error.message.includes('does not exist')) {
+      return NextResponse.json(
+        { 
+          error: 'Database tables have not been initialized yet. Please run POST /api/db/setup first.',
+          election: null
+        },
+        { status: 503 }
+      )
+    }
+    return NextResponse.json(
+      { error: error.message, election: null },
+      { status: 500 }
+    )
+  }
 }
 
 async function requireAdmin(req) {

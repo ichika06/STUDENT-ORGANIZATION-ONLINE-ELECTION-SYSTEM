@@ -1,12 +1,14 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Toaster, toast } from 'sonner'
 
 const defaultPositions = ['President', 'Vice President', 'Secretary']
 const selectablePositions = [
@@ -44,6 +46,9 @@ export default function AdminVoteRegistration() {
   const [nominationEnd, setNominationEnd] = useState('')
   const [electionStart, setElectionStart] = useState('')
   const [electionEnd, setElectionEnd] = useState('')
+  const [candidates, setCandidates] = useState([])
+  const [nextElectionDate, setNextElectionDate] = useState('')
+  const [showNextElectionDialog, setShowNextElectionDialog] = useState(false)
 
   useEffect(() => {
     if (positions.length === 0) {
@@ -106,6 +111,16 @@ export default function AdminVoteRegistration() {
     }
   }
 
+  async function fetchCandidates() {
+    try {
+      const res = await fetch('/api/candidates')
+      const json = await res.json()
+      setCandidates(json.candidates || [])
+    } catch (err) {
+      console.error('Failed to fetch candidates', err)
+    }
+  }
+
   async function handleLogin(e) {
     e?.preventDefault()
     setMessage('')
@@ -141,9 +156,8 @@ export default function AdminVoteRegistration() {
 
   async function handleAddCandidate(e) {
     e?.preventDefault()
-    setMessage('')
     if (!isAdmin) {
-      setMessage('You must be an admin to add candidates')
+      toast.error('You must be an admin to add candidates')
       return
     }
     setLoading(true)
@@ -160,14 +174,161 @@ export default function AdminVoteRegistration() {
 
       const json = await res.json()
       if (!res.ok) {
-        setMessage(json.error || 'Failed to add candidate')
+        if (json.error && json.error.toLowerCase().includes('already')) {
+          toast.warning(json.error || 'Candidate already added')
+        } else {
+          toast.error(json.error || 'Failed to add candidate')
+        }
       } else {
-        setMessage('Candidate added')
+        toast.success('Candidate added successfully')
         setCandidateName('')
+        await fetchCandidates()
       }
     } catch (err) {
       console.error(err)
-      setMessage('Failed to add candidate')
+      toast.error('Failed to add candidate')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleClearCandidates() {
+    if (!window.confirm('Are you sure you want to delete all candidates? This action cannot be undone.')) {
+      return
+    }
+    setLoading(true)
+    try {
+      const headers = { Authorization: 'Bearer ' + adminAccess }
+      const publicSecret = process.env.NEXT_PUBLIC_ADMIN_SECRET
+      if (publicSecret) headers['x-admin-secret'] = publicSecret
+
+      const res = await fetch('/api/candidates', {
+        method: 'DELETE',
+        headers
+      })
+
+      const json = await res.json()
+      if (!res.ok) {
+        toast.error(json.error || 'Failed to clear candidates')
+      } else {
+        toast.success('All candidates cleared successfully')
+        await fetchCandidates()
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to clear candidates')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDeleteCandidate(candidateId) {
+    if (!window.confirm('Are you sure you want to delete this candidate?')) {
+      return
+    }
+    setLoading(true)
+    try {
+      const headers = { Authorization: 'Bearer ' + adminAccess }
+      const publicSecret = process.env.NEXT_PUBLIC_ADMIN_SECRET
+      if (publicSecret) headers['x-admin-secret'] = publicSecret
+
+      const res = await fetch(`/api/candidates/${candidateId}`, {
+        method: 'DELETE',
+        headers
+      })
+
+      const json = await res.json()
+      if (!res.ok) {
+        toast.error(json.error || 'Failed to delete candidate')
+      } else {
+        toast.success('Candidate deleted')
+        await fetchCandidates()
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to delete candidate')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleClearVotes() {
+    if (!window.confirm('Are you sure you want to delete all votes? This action cannot be undone.')) {
+      return
+    }
+    setLoading(true)
+    try {
+      const headers = { Authorization: 'Bearer ' + adminAccess }
+      const publicSecret = process.env.NEXT_PUBLIC_ADMIN_SECRET
+      if (publicSecret) headers['x-admin-secret'] = publicSecret
+
+      const res = await fetch('/api/votes', {
+        method: 'DELETE',
+        headers
+      })
+
+      const json = await res.json()
+      if (!res.ok) {
+        toast.error(json.error || 'Failed to clear votes')
+      } else {
+        toast.success('All votes cleared successfully')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to clear votes')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleScheduleNextElection() {
+    if (!nextElectionDate) {
+      toast.warning('Please select a date for the next election')
+      return
+    }
+    setLoading(true)
+    try {
+      const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminAccess }
+      const publicSecret = process.env.NEXT_PUBLIC_ADMIN_SECRET
+      if (publicSecret) headers['x-admin-secret'] = publicSecret
+
+      // Clear all votes and reset election
+      const deleteRes = await fetch('/api/votes', {
+        method: 'DELETE',
+        headers
+      })
+      if (!deleteRes.ok) {
+        toast.error('Failed to clear votes')
+        setLoading(false)
+        return
+      }
+
+      // Set new election schedule
+      const payload = {
+        nomination_start_at: null,
+        nomination_end_at: null,
+        election_start_at: new Date(nextElectionDate).toISOString(),
+        election_end_at: null,
+      }
+      const scheduleRes = await fetch('/api/elections', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      })
+
+      const scheduleJson = await scheduleRes.json()
+      if (!scheduleRes.ok) {
+        toast.error(scheduleJson.error || 'Failed to schedule next election')
+      } else {
+        toast.success('Next election scheduled successfully')
+        setElection(scheduleJson.election)
+        setNextElectionDate('')
+        setShowNextElectionDialog(false)
+        await handleClearCandidates()
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to schedule next election')
     } finally {
       setLoading(false)
     }
@@ -188,11 +349,13 @@ export default function AdminVoteRegistration() {
         setElectionEnd(el.election_end_at ? new Date(el.election_end_at).toISOString().slice(0,16) : '')
       }
     })
+    fetchCandidates()
   }, [])
 
   return (
     <div className="min-h-screen flex items-start justify-center p-8">
-      <div className="max-w-screen max-h-screen w-full rounded-lg p-6 shadow">
+      <Toaster position="top-right" />
+      <div className="max-w-screen w-full rounded-lg p-6 shadow">
         <h1 className="text-2xl font-bold mb-4">Admin — Candidate Registration</h1>
 
         {!user && (
@@ -207,7 +370,6 @@ export default function AdminVoteRegistration() {
             </div>
             <div className="flex items-center gap-2">
               <Button type="submit" disabled={loading}>{loading ? <Spinner className="mr-2"/>: null}Sign in</Button>
-              <span className="text-sm text-muted-foreground">{message}</span>
             </div>
           </form>
         )}
@@ -225,8 +387,8 @@ export default function AdminVoteRegistration() {
               <div className="max-h-72 overflow-auto ">
                 {users.filter(u=> (u.username||'').toLowerCase().includes(userSearch.toLowerCase()) || (u.first_name||'').toLowerCase().includes(userSearch.toLowerCase()) || (u.last_name||'').toLowerCase().includes(userSearch.toLowerCase())).map(u => (
                   <div key={u.id} className={`p-2 rounded cursor-pointer m-2 bg-indigo-950 hover:bg-gray-800 ${selectedUserId===u.id? 'bg-gray-800':''}`} onClick={()=>{ setSelectedUserId(u.id); setShowUserBrowser(false) }}>
-                    <div className="text-sm font-medium">{u.username}</div>
-                    <div className="text-xs text-muted-foreground">{u.first_name || ''} {u.last_name || ''} {u.is_admin? '· admin':''}</div>
+                    <div className="text-sm font-medium">{(u.first_name || '') + (u.first_name && u.last_name ? ' ' : '') + (u.last_name || '') || u.username}</div>
+                    <div className="text-xs text-muted-foreground">{u.is_admin? 'Admin':''}</div>
                   </div>
                 ))}
               </div>
@@ -272,7 +434,7 @@ export default function AdminVoteRegistration() {
 
         {user && !isAdmin && (
           <div>
-            <p className="mb-2">Logged in as <strong>{user.username}</strong></p>
+            <p className="mb-2">Logged in as <strong>{(user.first_name || '') + (user.first_name && user.last_name ? ' ' : '') + (user.last_name || '') || user.username}</strong></p>
             <p className="text-red-600">Your account is not marked as admin.</p>
               <div className="mt-4">
                 <Button variant="outline" onClick={()=>{ localStorage.removeItem('admin_access'); setAdminAccess(''); setUser(null); setIsAdmin(false) }}>Sign out</Button>
@@ -281,13 +443,14 @@ export default function AdminVoteRegistration() {
         )}
 
         {user && isAdmin && (
-          <div className="grid grid-cols-3 gap-4">
-            <div className="col-span-1 p-3 border rounded">
+          <div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="col-span-1 p-3 border rounded">
               <h3 className="font-medium mb-2">Registered users</h3>
               <div className="mb-2">
                 <Button onClick={()=>setShowUserBrowser(true)}>Browse registered users</Button>
               </div>
-              <div className="text-sm text-muted-foreground mb-3">Selected: {selectedUserId ? (users.find(u=>u.id===selectedUserId)?.username || '—') : 'None'}</div>
+              <div className="text-sm text-muted-foreground mb-3">Selected: {selectedUserId ? ((users.find(u=>u.id===selectedUserId)?.first_name || '') + (users.find(u=>u.id===selectedUserId)?.first_name && users.find(u=>u.id===selectedUserId)?.last_name ? ' ' : '') + (users.find(u=>u.id===selectedUserId)?.last_name || '') || users.find(u=>u.id===selectedUserId)?.username || '—') : 'None'}</div>
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-sm">Assign position</label>
@@ -305,18 +468,31 @@ export default function AdminVoteRegistration() {
                   </SelectContent>
                 </Select>
                 <Button onClick={async ()=>{
-                  if (!selectedUserId) return setMessage('Select a user')
+                  if (!selectedUserId) { toast.warning('Select a user'); return }
+                  const u = users.find(x=>x.id===selectedUserId)
+                  const alreadyCandidate = candidates.some(c => c.name === u.username)
+                  if (alreadyCandidate) {
+                    toast.warning('This user is already registered as a candidate')
+                    return
+                  }
                   setLoading(true)
                   try {
-                    const u = users.find(x=>x.id===selectedUserId)
                     let headers = { 'Content-Type':'application/json', Authorization: 'Bearer '+adminAccess }
                     const publicSecret = process.env.NEXT_PUBLIC_ADMIN_SECRET
                     if (publicSecret) headers['x-admin-secret'] = publicSecret
                     const res = await fetch('/api/candidates', { method: 'POST', headers, body: JSON.stringify({ name: u.username, position }) })
                     const j = await res.json()
-                    if (!res.ok) setMessage(j.error||'Failed')
-                    else setMessage('Added candidate from user')
-                  } catch (err) { setMessage(err.message) }
+                    if (!res.ok) {
+                      if (j.error && j.error.toLowerCase().includes('already')) {
+                        toast.warning(j.error || 'Failed to add candidate')
+                      } else {
+                        toast.error(j.error || 'Failed to add candidate')
+                      }
+                    } else {
+                      toast.success('Candidate added from user')
+                      await fetchCandidates()
+                    }
+                  } catch (err) { toast.error(err.message) }
                   setLoading(false)
                 }}>Add selected user as candidate</Button>
               </div>
@@ -348,7 +524,6 @@ export default function AdminVoteRegistration() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Button type="submit" disabled={loading}>{loading? <Spinner className="mr-2"/>: null}Add candidate</Button>
-                  <span className="text-sm text-muted-foreground">{message}</span>
                 </div>
               </form>
             </div>
@@ -390,16 +565,149 @@ export default function AdminVoteRegistration() {
                     }
                     const res = await fetch('/api/elections', { method: 'POST', headers, body: JSON.stringify(payload) })
                     const j = await res.json()
-                    if (!res.ok) setMessage(j.error || 'Failed to set schedule')
+                    if (!res.ok) toast.error(j.error || 'Failed to set schedule')
                     else {
-                      setMessage('Schedule updated')
+                      toast.success('Schedule updated')
                       setElection(j.election)
                     }
                   } catch (err) {
-                    setMessage(err.message)
+                    toast.error(err.message)
                   }
                   setLoading(false)
                 }}>Save schedule</Button>
+              </div>
+              <div className="space-y-2 pt-3 border-t">
+                <h4 className="text-sm font-semibold">Danger Zone</h4>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleClearCandidates}
+                  disabled={loading}
+                  className="w-full border-red-300 hover:bg-red-500"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Clear all candidates
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleClearVotes}
+                  disabled={loading}
+                  className="w-full border-red-300 hover:bg-red-500"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Clear all votes
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setShowNextElectionDialog(true)}
+                  disabled={loading}
+                  className="w-full border-red-300 hover:bg-red-500"
+                >
+                  Schedule Next Election
+                </Button>
+              </div>
+            </div>
+            </div>
+            
+            <div className="p-3 border rounded mt-4">
+            <h3 className="font-medium mb-3">Registered Candidates ({candidates.length})</h3>
+            {candidates.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No candidates registered yet.</p>
+            ) : (
+              <>
+                {(() => {
+                  const positionsWithCandidates = [...new Set(candidates.map(c => c.position))].sort((a, b) => {
+                    const aIndex = positions.indexOf(a)
+                    const bIndex = positions.indexOf(b)
+                    return (aIndex === -1 ? positions.length : aIndex) - (bIndex === -1 ? positions.length : bIndex)
+                  })
+                  const firstPosition = positionsWithCandidates[0]
+                  
+                  return (
+                    <Tabs defaultValue={firstPosition} className="w-full">
+                      <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${positionsWithCandidates.length}, minmax(0, 1fr))` }}>
+                        {positionsWithCandidates.map(pos => {
+                          const count = candidates.filter(c => c.position === pos).length
+                          return (
+                            <TabsTrigger key={pos} value={pos} className="text-sm">
+                              {pos} <Badge variant="secondary" className="ml-2 text-xs">{count}</Badge>
+                            </TabsTrigger>
+                          )
+                        })}
+                      </TabsList>
+                      {positionsWithCandidates.map(pos => {
+                        const positionCandidates = candidates.filter(c => c.position === pos)
+                        return (
+                          <TabsContent key={pos} value={pos} className="mt-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                              {positionCandidates.map(c => {
+                                const user = users.find(u => u.username === c.name)
+                                const displayName = (user?.first_name || '') + (user?.first_name && user?.last_name ? ' ' : '') + (user?.last_name || '') || c.name
+                                return (
+                                  <div key={c.id} className="p-3 border rounded bg-card flex items-start justify-between">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-medium text-sm truncate">{displayName}</div>
+                                      <div className="text-xs text-muted-foreground">{c.position}</div>
+                                    </div>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon"
+                                      className="h-8 w-8 ml-2 flex-shrink-0"
+                                      onClick={() => handleDeleteCandidate(c.id)}
+                                      disabled={loading}
+                                    >
+                                      <Trash2 className="h-4 w-4 text-red-500" />
+                                    </Button>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </TabsContent>
+                        )
+                      })}
+                    </Tabs>
+                  )
+                })()}
+              </>
+            )}
+          </div>
+          </div>
+        )}
+
+        {showNextElectionDialog && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="w-full max-w-md rounded-lg border bg-background p-4 shadow dark:bg-[#0b0b0b]">
+              <h3 className="text-lg font-semibold mb-1">Schedule Next Election</h3>
+              <p className="text-sm text-muted-foreground mb-4">Enter the date when the next election will be held. This will clear all votes and candidates.</p>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm mb-2">Election Start Date</label>
+                  <Input 
+                    type="datetime-local" 
+                    value={nextElectionDate} 
+                    onChange={e => setNextElectionDate(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => {
+                      setShowNextElectionDialog(false)
+                      setNextElectionDate('')
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleScheduleNextElection}
+                    disabled={loading || !nextElectionDate}
+                  >
+                    {loading ? <Spinner className="mr-2" /> : null}
+                    Schedule
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

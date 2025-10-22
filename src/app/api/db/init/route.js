@@ -1,42 +1,39 @@
-"use server";
+import { NextResponse } from 'next/server';
+import pool from '@/lib/db';
 
-const { Pool } = require('pg');
-
-const pool = new Pool({
-        user: process.env.POST_USER,
-        password: process.env.POST_PASSWORD,
-        host: process.env.POST_HOST,
-        port: process.env.POST_PORT,
-        database: process.env.POST_DATABASE,
-        ssl: process.env.POST_SSL === 'require' ? { rejectUnauthorized: false } : false
-});
-
-// initialize schema if missing
-(async function init() {
+export async function POST(request) {
     try {
-        // ensure profile columns exist for upgrades
-        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;`)
-        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT;`)
-        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`)
-        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS organization TEXT;`)
-        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;`)
-        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;`)
-
+        // Create users table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                first_name TEXT,
+                last_name TEXT,
+                role TEXT,
+                organization TEXT,
+                avatar TEXT,
+                is_admin BOOLEAN DEFAULT false,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
             );
+        `);
 
+        // Add is_admin column if it doesn't exist (for existing tables)
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;`);
+
+        // Create votes table
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS votes (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
                 candidate TEXT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
             );
-            
+        `);
+
+        // Create refresh_tokens table
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS refresh_tokens (
                 id SERIAL PRIMARY KEY,
                 token TEXT NOT NULL,
@@ -45,14 +42,20 @@ const pool = new Pool({
                 revoked BOOLEAN DEFAULT false,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
             );
-            
+        `);
+
+        // Create candidates table
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS candidates (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 position TEXT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
             );
-            
+        `);
+
+        // Create elections table
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS elections (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT 'Main Election',
@@ -64,15 +67,33 @@ const pool = new Pool({
                 end_at TIMESTAMP WITH TIME ZONE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
             );
-        `)
+        `);
 
-        await pool.query(`ALTER TABLE elections ADD COLUMN IF NOT EXISTS nomination_start_at TIMESTAMP WITH TIME ZONE;`)
-        await pool.query(`ALTER TABLE elections ADD COLUMN IF NOT EXISTS nomination_end_at TIMESTAMP WITH TIME ZONE;`)
-        await pool.query(`ALTER TABLE elections ADD COLUMN IF NOT EXISTS election_start_at TIMESTAMP WITH TIME ZONE;`)
-        await pool.query(`ALTER TABLE elections ADD COLUMN IF NOT EXISTS election_end_at TIMESTAMP WITH TIME ZONE;`)
-    } catch (err) {
-        console.error('db init error', err.message)
+        return NextResponse.json(
+            { 
+                success: true, 
+                message: 'All database tables created successfully!' 
+            },
+            { status: 200 }
+        );
+    } catch (error) {
+        console.error('Database initialization error:', error);
+        return NextResponse.json(
+            { 
+                success: false, 
+                error: error.message 
+            },
+            { status: 500 }
+        );
     }
-})();
+}
 
-module.exports = pool;
+export async function GET(request) {
+    return NextResponse.json(
+        { 
+            message: 'Database initialization endpoint. Send a POST request to create tables.',
+            endpoint: 'POST /api/db/init'
+        },
+        { status: 200 }
+    );
+}

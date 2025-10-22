@@ -21,29 +21,47 @@ async function tryRefresh(req) {
 }
 
 export async function GET(req) {
-  // aggregate votes by candidate
-  const res = await pool.query('SELECT candidate, COUNT(*)::int AS votes FROM votes GROUP BY candidate')
+  try {
+    // aggregate votes by candidate
+    const res = await pool.query('SELECT candidate, COUNT(*)::int AS votes FROM votes GROUP BY candidate')
 
-  // try to identify current user (optional) to return their votes
-  const auth = req.headers.get('authorization') || ''
-  const m = auth.match(/^Bearer (.+)$/)
-  let access = m ? m[1] : null
-  if (!access) {
-    access = await tryRefresh(req)
-  }
-
-  let myVotes = []
-  if (access) {
-    try {
-      const payload = jwt.verify(access, ACCESS_SECRET)
-      const r = await pool.query('SELECT v.candidate, c.position FROM votes v LEFT JOIN candidates c ON v.candidate = c.name WHERE v.user_id = $1', [payload.sub])
-      myVotes = r.rows || []
-    } catch (err) {
-      // ignore - no myVotes
+    // try to identify current user (optional) to return their votes
+    const auth = req.headers.get('authorization') || ''
+    const m = auth.match(/^Bearer (.+)$/)
+    let access = m ? m[1] : null
+    if (!access) {
+      access = await tryRefresh(req)
     }
-  }
 
-  return NextResponse.json({ results: res.rows, myVotes })
+    let myVotes = []
+    if (access) {
+      try {
+        const payload = jwt.verify(access, ACCESS_SECRET)
+        const r = await pool.query('SELECT v.candidate, c.position FROM votes v LEFT JOIN candidates c ON v.candidate = c.name WHERE v.user_id = $1', [payload.sub])
+        myVotes = r.rows || []
+      } catch (err) {
+        // ignore - no myVotes
+      }
+    }
+
+    return NextResponse.json({ results: res.rows, myVotes })
+  } catch (error) {
+    console.error('Error fetching votes:', error.message)
+    if (error.message.includes('does not exist')) {
+      return NextResponse.json(
+        { 
+          error: 'Database tables have not been initialized yet. Please run POST /api/db/setup first.',
+          results: [],
+          myVotes: []
+        },
+        { status: 503 }
+      )
+    }
+    return NextResponse.json(
+      { error: error.message, results: [], myVotes: [] },
+      { status: 500 }
+    )
+  }
 }
 
 export async function POST(req) {
@@ -85,4 +103,32 @@ export async function POST(req) {
   } catch (err) {
     return NextResponse.json({ error: 'invalid token' }, { status: 401 })
   }
+}
+
+export async function DELETE(req) {
+  // Check admin authorization
+  const secret = req.headers.get('x-admin-secret')
+  const isAdminSecret = secret && secret === (process.env.ADMIN_SECRET || 'admin-secret')
+  
+  let isAdminToken = false
+  if (!isAdminSecret) {
+    const auth = req.headers.get('authorization') || ''
+    const m = auth.match(/^Bearer (.+)$/)
+    if (m) {
+      try {
+        const payload = jwt.verify(m[1], ACCESS_SECRET)
+        const r = await pool.query('SELECT is_admin FROM users WHERE id = $1', [payload.sub])
+        isAdminToken = !!(r.rows[0] && r.rows[0].is_admin)
+      } catch (err) {
+        // not admin
+      }
+    }
+  }
+
+  if (!isAdminSecret && !isAdminToken) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
+
+  await pool.query('DELETE FROM votes')
+  return NextResponse.json({ ok: true, message: 'all votes deleted' })
 }

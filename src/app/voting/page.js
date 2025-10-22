@@ -29,6 +29,19 @@ import {
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { EmptyUser } from '@/components/emptyuser'
 import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from '@/components/ui/tabs'
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from '@/components/ui/empty'
+import {
   AreaChart,
   Area,
   XAxis,
@@ -36,6 +49,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
+import { Toaster, toast } from 'sonner'
 
 const DEFAULT_POSITIONS = ['President', 'Vice President', 'Secretary']
 
@@ -48,11 +62,11 @@ export default function Voting() {
   const [votes, setVotes] = useState([])
   const [userVotedPositions, setUserVotedPositions] = useState([])
   const [isCandidate, setIsCandidate] = useState(false)
-  const [message, setMessage] = useState('')
   const [loadingVotes, setLoadingVotes] = useState(false)
   const [votingFor, setVotingFor] = useState(null)
   const [loading, setLoading] = useState(true)
   const [election, setElection] = useState(null)
+  const [chartPositionTab, setChartPositionTab] = useState('')
 
   const positions = useMemo(() => {
     const unique = Array.from(new Set((allCandidates || []).map(c => c.position).filter(Boolean)))
@@ -64,7 +78,10 @@ export default function Voting() {
     if (!positions.includes(selectedPosition)) {
       setSelectedPosition(positions[0])
     }
-  }, [positions, selectedPosition])
+    if (!chartPositionTab) {
+      setChartPositionTab(positions[0])
+    }
+  }, [positions, selectedPosition, chartPositionTab])
 
   const fetchVotes = useCallback(async () => {
     try {
@@ -76,7 +93,7 @@ export default function Voting() {
       }
     } catch (err) {
       console.error('Failed to load votes', err)
-      setMessage('Failed to load votes')
+      toast.error('Failed to load votes')
     }
   }, [])
 
@@ -131,9 +148,8 @@ export default function Voting() {
   }, [fetchVotes, fetchUser])
 
   async function submitVote(candidate) {
-    setMessage('')
     if (!token) {
-      setMessage('You must be logged in to vote.')
+      toast.error('You must be logged in to vote.')
       return
     }
     setVotingFor(candidate)
@@ -160,7 +176,7 @@ export default function Voting() {
           })
           json = await res2.json()
         } else {
-          setMessage('Session expired, please login again')
+          toast.error('Session expired, please login again')
           setToken('')
           setUser(null)
           localStorage.removeItem('access')
@@ -168,14 +184,14 @@ export default function Voting() {
         }
       }
       if (json.error) {
-        setMessage(json.error)
+        toast.error(json.error)
       } else {
-        setMessage('Vote submitted')
+        toast.success('Vote submitted successfully!')
         await fetchVotes()
       }
     } catch (err) {
       console.error('Vote error', err)
-      setMessage('Failed to submit vote')
+      toast.error('Failed to submit vote')
     } finally {
       setVotingFor(null)
       setLoadingVotes(false)
@@ -229,8 +245,12 @@ export default function Voting() {
   const resultsByPosition = {}
   positions.forEach(pos => {
     const candidatesForPos = (allCandidates || []).filter(c => c.position === pos)
-    // build array of { id, name, votes }
-    const arr = candidatesForPos.map(c => ({ id: c.id, name: c.name, votes: votes.find(v => v.candidate === c.name)?.votes || 0 }))
+    // build array of { id, name, votes, username, displayName }
+    const arr = candidatesForPos.map(c => {
+      const user = usersList.find(u => u.username === c.name)
+      const displayName = (user?.first_name || '') + (user?.first_name && user?.last_name ? ' ' : '') + (user?.last_name || '') || c.name
+      return { id: c.id, name: c.name, displayName, votes: votes.find(v => v.candidate === c.name)?.votes || 0 }
+    })
     arr.sort((a,b)=> b.votes - a.votes)
     resultsByPosition[pos] = arr
   })
@@ -244,7 +264,7 @@ export default function Voting() {
     const list = resultsByPosition[pos] || []
     positionTotals[pos] = list.reduce((sum, item) => sum + (item.votes || 0), 0)
     const winner = list[0]
-    topByPosition[pos] = { candidate: winner?.name || '—', votes: winner?.votes ?? 0 }
+    topByPosition[pos] = { candidate: winner?.displayName || '—', votes: winner?.votes ?? 0 }
   })
 
   const chartData = positions.map(p => ({ name: p, votes: positionTotals[p] || 0 }))
@@ -268,8 +288,9 @@ export default function Voting() {
 
   return (
     <div className="p-8 flex flex-col max-h-screen">
+      <Toaster position="top-right" />
           <div className="max-w-screen w-full rounded-lg p-6 shadow">
-        <h1 className="text-2xl font-bold mb-4">Simple Voting</h1>
+        <h1 className="text-2xl font-bold mb-4">STUDENT ORGANIZATION ONLINE ELECTION SYSTEM</h1>
 
         <div className="mb-4">
           {user ? (
@@ -281,7 +302,7 @@ export default function Voting() {
                   <span className="text-sm font-semibold text-gray-700">{(user.first_name ? user.first_name[0] : user.username?.[0]||'U') + (user.last_name ? user.last_name[0] : '')}</span>
                 )}
               </div>
-              <div className="flex-1">Logged in as <strong>{user.username}</strong></div>
+              <div className="flex-1"><strong>{(user.first_name || '') + (user.first_name && user.last_name ? ' ' : '') + (user.last_name || '') || user.username}</strong></div>
               <Button size="sm" variant="outline" onClick={signOut}>Sign Out</Button>
             </div>
 
@@ -312,23 +333,40 @@ export default function Voting() {
             </div>
 
             <div className="p-3 border rounded">
-              <h3 className="text-sm font-medium mb-2">Votes (by position)</h3>
-              <div style={{ width: '100%', height: 160 }}>
-                <ResponsiveContainer>
-                  <AreaChart data={chartData}>
-                    <defs>
-                      <linearGradient id="colorVotes" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8} />
-                        <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="votes" stroke="#8884d8" fillOpacity={1} fill="url(#colorVotes)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              <h3 className="text-sm font-medium mb-2">Votes by Position</h3>
+              <Tabs value={chartPositionTab} onValueChange={setChartPositionTab}>
+                <TabsList className="mb-3 w-full justify-start overflow-x-auto">
+                  {positions.map(pos => (
+                    <TabsTrigger key={pos} value={pos} className="text-xs sm:text-sm">
+                      {pos}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                {positions.map(pos => {
+                  const candidatesForPos = resultsByPosition[pos] || []
+                  const chartDataForPos = candidatesForPos.map(c => ({ name: c.displayName, votes: c.votes }))
+                  return (
+                    <TabsContent key={pos} value={pos} className="mt-3">
+                      <div style={{ width: '100%', height: 200 }}>
+                        <ResponsiveContainer>
+                          <AreaChart data={chartDataForPos}>
+                            <defs>
+                              <linearGradient id={`colorVotes-${pos}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#554dc9" stopOpacity={0.8} />
+                                <stop offset="95%" stopColor="#554dc9" stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
+                            <YAxis />
+                            <Tooltip />
+                            <Area type="monotone" dataKey="votes" stroke="#554dc9" fillOpacity={1} fill={`url(#colorVotes-${pos})`} />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </TabsContent>
+                  )
+                })}
+              </Tabs>
             </div>
           </div>
 
@@ -362,33 +400,89 @@ export default function Voting() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {isClosedPhase ? (
-              positions.map(pos => {
-                const list = resultsByPosition[pos] || []
-                const winner = list[0]
-                return (
-                  <Card key={pos} className="p-2">
-                    <CardContent>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-lg font-semibold">{pos}</div>
-                          <div className="text-sm text-muted-foreground">Winner: {winner ? winner.name : '—'}</div>
+              <Card className="col-span-full p-6 min-h-screen flex flex-col">
+                <CardContent className="flex-1 flex flex-col justify-center">
+                  {allCandidates.length === 0 ? (
+                    <Empty>
+                      <EmptyHeader>
+                        <EmptyTitle>Next Election</EmptyTitle>
+                        <EmptyDescription>
+                          Next Election will be scheduled on {electionStartDate ? electionStartDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'a date to be announced'}
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : (
+                    <>
+                      <div className="text-center mb-8">
+                        <h2 className="text-4xl font-bold mb-10">Election Results</h2>
+                      </div>
+                      
+                      <div className="flex items-end justify-center gap-8 mb-12 h-96">
+                        {(() => {
+                          // Organize positions with President in center
+                          const presidentPos = positions.find(p => p === 'President')
+                          const otherPositions = positions.filter(p => p !== 'President')
+                          const orderedPositions = presidentPos ? [otherPositions[0], presidentPos, otherPositions[1]].filter(Boolean) : leaderboardOrder
+                          
+                          return orderedPositions.map((pos, idx) => {
+                            const list = resultsByPosition[pos] || []
+                            const votes = list.reduce((sum, item) => sum + (item.votes || 0), 0)
+                            const winner = list[0]
+                            const podiumHeights = [100, 200, 100] // Left, Center (President), Right
+                            const podiumHeight = podiumHeights[idx] || 50
+                            const u = usersList.find(u => u.username === winner?.name)
+                        
+                        return (
+                          <div key={pos} className="flex flex-col items-center gap-3">
+                            <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-primary bg-gray-100 flex items-center justify-center flex-shrink-0">
+                              {u && u.avatar ? (
+                                <img src={u.avatar} alt={winner?.displayName} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="font-semibold text-2xl text-gray-700">{(u ? ((u.first_name||'')[0] + (u.last_name||'')[0]) : winner?.displayName?.[0])}</span>
+                              )}
+                            </div>
+                            <div className="text-center mb-3">
+                              <div className="text-sm font-semibold text-muted-foreground">{pos}</div>
+                              <div className="text-lg font-bold">{winner?.displayName || '—'}</div>
+                            </div>
+                            <div 
+                              className="w-32 bg-primary/20 border-primary rounded-t-2xl flex items-center justify-center transition-all"
+                              style={{ height: `${podiumHeight}px` }}
+                            >
+                              <div className="text-center">
+                                <div className="text-3xl font-bold">{votes || 0}</div>
+                                <div className="text-xs text-muted-foreground">votes</div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })
+                    })()}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-12">
+                    {positions.map(pos => {
+                      const list = resultsByPosition[pos] || []
+                      return (
+                        <div key={pos} className="border rounded-lg p-4 bg-card">
+                          <h3 className="font-bold text-lg mb-4 text-center">{pos}</h3>
+                          <ol className="space-y-2">
+                            {list.slice(0, 5).map((item, idx) => (
+                              <li key={item.id || item.name} className="flex items-center gap-2 text-sm">
+                                <span className="font-bold text-primary min-w-6">{idx + 1}.</span>
+                                <span className="flex-1">{item.displayName}</span>
+                                <span className="font-semibold">{item.votes}</span>
+                              </li>
+                            ))}
+                          </ol>
                         </div>
-                        <div className="text-sm">{winner ? winner.votes : 0} votes</div>
-                      </div>
-                      <div className="mt-3">
-                        <ol className="list-decimal list-inside text-sm space-y-1">
-                          {list.slice(0,5).map(item => (
-                            <li key={item.id || item.name} className="flex items-center justify-between">
-                              <span>{item.name}</span>
-                              <span className="text-xs text-muted-foreground">{item.votes}</span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })
+                      )
+                    })}
+                  </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
             ) : isPreNomination ? (
               <Card className="p-4 col-span-full">
                 <CardContent>
@@ -396,24 +490,30 @@ export default function Voting() {
                 </CardContent>
               </Card>
             ) : (() => {
-              const list = isElectionPhase ? candidatesBySelectedPosition : allCandidates
+              const list = isElectionPhase ? resultsByPosition[selectedPosition] || [] : Object.values(resultsByPosition).flat()
               if (!list.length) {
                 return (
-                  <Card className="p-4 col-span-full">
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground">
+                  <Empty className="col-span-full">
+                    <EmptyHeader>
+                      <EmptyTitle>
+                        {isElectionPhase
+                          ? `No candidates for ${selectedPosition}`
+                          : 'No candidates available'}
+                      </EmptyTitle>
+                      <EmptyDescription>
                         {isElectionPhase
                           ? `No candidates have been nominated for ${selectedPosition} yet.`
                           : 'No candidates have been nominated yet.'}
-                      </p>
-                    </CardContent>
-                  </Card>
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
                 )
               }
 
               return list.map(c => {
                 const name = c.name
-                const tally = votes.find(v => v.candidate === name)?.votes || 0
+                const displayName = c.displayName || c.name
+                const tally = c.votes || 0
                 const isVoting = votingFor === name && loadingVotes
                 const hasVotedPosition = userVotedPositions.includes(c.position)
                 const u = usersList.find(u => u.username === name)
@@ -424,9 +524,9 @@ export default function Voting() {
                       <div className="flex items-start gap-3">
                         <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-100 flex items-center justify-center">
                           {u && u.avatar ? (
-                            <img src={u.avatar} alt={name} className="w-full h-full object-cover" />
+                            <img src={u.avatar} alt={displayName} className="w-full h-full object-cover" />
                           ) : (
-                            <span className="font-semibold text-gray-700">{(u ? ((u.first_name||'')[0] + (u.last_name||'')[0]) : name[0])}</span>
+                            <span className="font-semibold text-gray-700">{(u ? ((u.first_name||'')[0] + (u.last_name||'')[0]) : displayName[0])}</span>
                           )}
                         </div>
                         <div className="flex-1">
@@ -434,15 +534,15 @@ export default function Voting() {
                             <div className="flex items-center gap-2">
                               <Sheet>
                                 <SheetTrigger asChild>
-                                  <button className="text-lg font-medium underline">{name}</button>
+                                  <button className="text-lg font-medium underline">{displayName}</button>
                                 </SheetTrigger>
                                 <SheetContent side="right">
                                   <SheetHeader>
-                                    <SheetTitle>{name}</SheetTitle>
+                                    <SheetTitle>{displayName}</SheetTitle>
                                     <SheetDescription>{c.position}</SheetDescription>
                                   </SheetHeader>
                                   <div className="p-4">
-                                    {u && u.avatar ? <img src={u.avatar} alt={name} className="w-32 h-32 rounded-md object-cover mb-4" /> : null}
+                                    {u && u.avatar ? <img src={u.avatar} alt={displayName} className="w-32 h-32 rounded-md object-cover mb-4" /> : null}
                                     <div className="text-sm">Org: {u?.organization || '—'}</div>
                                     <div className="text-sm">Role/Year: {u?.role || '—'}</div>
                                   </div>
@@ -455,7 +555,7 @@ export default function Voting() {
                             <div className="text-xs text-muted-foreground">ID: {c.id}</div>
                           </div>
                           <div className="text-xs text-muted-foreground">{c.position} · {tally} votes</div>
-                          <div className="mt-2 text-xs text-muted-foreground">Org: {u?.organization || '—'} · Year: {u?.role || '—'}</div>
+                          <div className="mt-2 text-xs text-muted-foreground">Org: {u?.organization || '—'} · Role: {u?.role || '—'}</div>
                           <div className="mt-2">{u ? <span className="text-xs font-medium text-green-700">Candidate</span> : null}</div>
                         </div>
                         <div className="flex flex-col items-end">
@@ -480,8 +580,6 @@ export default function Voting() {
             })()}
           </div>
         </div>
-
-        {message && <div className="mt-2 text-sm text-red-600">{message}</div>}
       </div>
     </div>
   )
